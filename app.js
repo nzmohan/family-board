@@ -1,7 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { SUPABASE_URL, SUPABASE_ANON_KEY, DEFAULT_COLUMNS } from "./config.js";
+import { SUPABASE_URL, SUPABASE_ANON_KEY, FAMILY_EMAIL, GOOGLE_CLIENT_ID, DEFAULT_COLUMNS } from "./config.js";
 
-const VERSION = "1.0";
+const VERSION = "2.0";
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { realtime: { params: { eventsPerSecond: 5 } } });
 
 const $ = (id) => document.getElementById(id);
@@ -9,18 +9,20 @@ const colors = ["#0e9f8e", "#8b5cf6"]; // person 1, person 2
 const colDot = { ideas: "var(--ideas)", todo: "var(--todo)", doing: "var(--doing)", done: "var(--done)" };
 
 let state = {
-  settings: null,          // { passhash, names:[a,b], labels:{key:label} }
+  settings: null,          // { names:[a,b], labels:{key:label} }
   cards: [],
+  lists: [],               // [{id,title,...}]
+  listItems: [],           // [{id,list_id,text,done,...}]
+  events: [],              // [{id,title,event_date,event_time,notes,...}]
   me: localStorage.getItem("fb_me") || null,
   columns: DEFAULT_COLUMNS.map(c => ({ ...c })),
   activeCol: "ideas",
+  view: "board",
+  openListId: null,
+  editingDateId: null,
 };
 
 /* ---------------- helpers ---------------- */
-async function sha(text){
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2,"0")).join("");
-}
 function toast(msg){
   const t = $("toast"); t.textContent = msg; t.classList.remove("hidden");
   clearTimeout(toast._t); toast._t = setTimeout(()=>t.classList.add("hidden"), 2200);
@@ -188,22 +190,34 @@ async function exportForClaude(){
 }
 
 /* ---------------- flows: gate / who ---------------- */
-async function boot(){
-  await loadSettings();
-  // apply shared labels/columns
-  if (state.settings?.labels){
+function applyLabels(){
+  if (state.settings?.labels)
     state.columns = DEFAULT_COLUMNS.map(c => ({ key:c.key, label: state.settings.labels[c.key] || c.label }));
+}
+async function afterAuthed(){
+  await loadSettings(); applyLabels();
+  if (state.settings?.names?.length){
+    if (!state.me || !state.settings.names.includes(state.me)) askWho(); else enterApp();
+  } else {
+    showNamesSetup(); // account exists but no names yet
   }
-  if (!state.settings){ // first run ever
-    show("gate"); $("gate-unlock").classList.add("hidden"); $("gate-setup").classList.remove("hidden");
-    $("gate-title").textContent = "Set up your family board";
-    $("gate-sub").textContent = "Just takes a moment.";
-    return;
-  }
-  const unlocked = localStorage.getItem("fb_unlocked") === state.settings.passhash;
-  if (!unlocked){ show("gate"); return; }
-  if (!state.me || !state.settings.names.includes(state.me)){ askWho(); return; }
-  enterApp();
+}
+async function boot(){
+  const { data:{ session } } = await sb.auth.getSession();
+  if (session){ await afterAuthed(); return; }
+  // not signed in → ask for the family passcode
+  show("gate");
+  $("gate-unlock").classList.remove("hidden");
+  $("gate-setup").classList.add("hidden");
+  $("gate-title").textContent = "Our Family Board";
+  $("gate-sub").textContent = "Enter the family passcode";
+}
+function showNamesSetup(){
+  show("gate");
+  $("gate-unlock").classList.add("hidden");
+  $("gate-setup").classList.remove("hidden");
+  $("gate-title").textContent = "Welcome 👋";
+  $("gate-sub").textContent = "Set your names to get started.";
 }
 function askWho(){
   hide("gate"); show("who");
@@ -219,7 +233,8 @@ function askWho(){
 async function enterApp(){
   hide("gate"); hide("who"); show("app");
   $("set-version").textContent = `Our Family Board v${VERSION}`;
-  await loadCards();
+  await Promise.all([ loadCards(), loadLists(), loadEvents() ]);
+  switchView(state.view);
   subscribe();
 }
 
@@ -227,6 +242,9 @@ async function enterApp(){
 function subscribe(){
   sb.channel("board")
     .on("postgres_changes", { event:"*", schema:"public", table:"cards" }, () => loadCards())
+    .on("postgres_changes", { event:"*", schema:"public", table:"lists" }, () => loadLists())
+    .on("postgres_changes", { event:"*", schema:"public", table:"list_items" }, () => loadLists())
+    .on("postgres_changes", { event:"*", schema:"public", table:"events" }, () => loadEvents())
     .on("postgres_changes", { event:"*", schema:"public", table:"settings" }, async () => {
       await loadSettings();
       if (state.settings?.labels)
@@ -236,33 +254,340 @@ function subscribe(){
     .subscribe();
 }
 
+/* ---------------- view switching ---------------- */
+function switchView(view){
+  state.view = view;
+  ["board","lists","dates"].forEach(v => $("view-"+v).classList.toggle("hidden", v!==view));
+  document.querySelectorAll(".nav-btn").forEach(b => b.classList.toggle("active", b.dataset.view===view));
+  if (view==="board") renderBoard();
+  if (view==="lists") renderLists();
+  if (view==="dates") renderDates();
+}
+
+/* ================= LISTS ================= */
+async function loadLists(){
+  const [{ data:lists }, { data:items }] = await Promise.all([
+    sb.from("lists").select("*").order("position",{ascending:true}),
+    sb.from("list_items").select("*").order("position",{ascending:true}),
+  ]);
+  state.lists = lists || []; state.listItems = items || [];
+  if (state.view==="lists") renderLists();
+  if (state.openListId) renderListItems();
+}
+function itemsOf(listId){ return state.listItems.filter(i => i.list_id===listId); }
+async function addList(title){
+  const { data } = await sb.from("lists").insert({ title: title.trim(), position: Date.now() }).select().single();
+  loadLists();
+  if (data) openList(data.id);
+}
+async function renameList(id, title){ await sb.from("lists").update({ title }).eq("id", id); loadLists(); }
+async function deleteList(id){ await sb.from("lists").delete().eq("id", id); loadLists(); }
+async function addItem(listId, text){
+  const item = { list_id:listId, text:text.trim(), author:state.me, position:Date.now() };
+  state.listItems.push({ ...item, id:"t"+Date.now(), done:false }); renderListItems();
+  await sb.from("list_items").insert(item); loadLists();
+}
+async function toggleItem(id, done){
+  state.listItems = state.listItems.map(i => i.id===id ? {...i, done} : i); renderListItems();
+  await sb.from("list_items").update({ done }).eq("id", id);
+}
+async function deleteItem(id){
+  state.listItems = state.listItems.filter(i => i.id!==id); renderListItems();
+  await sb.from("list_items").delete().eq("id", id);
+}
+async function clearDone(listId){
+  const ids = itemsOf(listId).filter(i=>i.done).map(i=>i.id);
+  if (!ids.length){ toast("Nothing ticked yet"); return; }
+  state.listItems = state.listItems.filter(i => !ids.includes(i.id)); renderListItems();
+  await sb.from("list_items").delete().in("id", ids); loadLists();
+}
+function renderLists(){
+  const wrap = $("lists"); wrap.innerHTML = "";
+  if (!state.lists.length){
+    wrap.innerHTML = `<div class="list-empty">No lists yet.<br>Make one below — e.g. <b>Grocery</b> or <b>House items</b>.</div>`;
+    return;
+  }
+  state.lists.forEach(l => {
+    const items = itemsOf(l.id);
+    const open = items.filter(i=>!i.done).length;
+    const card = document.createElement("div");
+    card.className = "list-card";
+    card.innerHTML = `<span class="lc-title"></span>
+      <span class="lc-count">${open} left${items.length?` · ${items.length}`:""}</span>
+      <span class="lc-arrow">›</span>`;
+    card.querySelector(".lc-title").textContent = l.title;
+    card.onclick = () => openList(l.id);
+    wrap.appendChild(card);
+  });
+}
+function openList(id){ state.openListId = id; renderListItems(); show("list-sheet"); }
+function renderListItems(){
+  const list = state.lists.find(l => l.id===state.openListId);
+  if (!list){ hide("list-sheet"); return; }
+  $("list-sheet-title").textContent = list.title;
+  const wrap = $("list-items"); wrap.innerHTML = "";
+  const items = itemsOf(list.id).slice().sort((a,b)=> (a.done?1:0)-(b.done?1:0));
+  if (!items.length){ wrap.innerHTML = `<div class="list-empty">Empty — add your first item below.</div>`; }
+  items.forEach(it => {
+    const row = document.createElement("div");
+    row.className = "li" + (it.done?" done":"");
+    row.innerHTML = `<button class="check">${it.done?"✓":""}</button>
+      <span class="li-text"></span><button class="li-del">✕</button>`;
+    row.querySelector(".li-text").textContent = it.text;
+    row.querySelector(".check").onclick = () => toggleItem(it.id, !it.done);
+    row.querySelector(".li-text").onclick = () => toggleItem(it.id, !it.done);
+    row.querySelector(".li-del").onclick = () => deleteItem(it.id);
+    wrap.appendChild(row);
+  });
+}
+
+/* ================= DATES ================= */
+async function loadEvents(){
+  const { data } = await sb.from("events").select("*").order("event_date",{ascending:true});
+  state.events = data || [];
+  if (state.view==="dates") renderDates();
+}
+function fmtDateSub(ev){
+  const d = new Date(ev.event_date + "T00:00:00");
+  let s = d.toLocaleDateString(undefined, { weekday:"long", day:"numeric", month:"long" });
+  if (ev.event_time) s += " · " + ev.event_time;
+  if (ev.notes) s += " · " + ev.notes;
+  return s;
+}
+// Build a one-tap "Add to Google Calendar" link (no setup needed)
+function gcalLink(ev){
+  const base = "https://calendar.google.com/calendar/render?action=TEMPLATE";
+  const d = ev.event_date.replace(/-/g,"");
+  let dates;
+  if (ev.event_time){
+    const start = d + "T" + ev.event_time.replace(":","") + "00";
+    const [h,m] = ev.event_time.split(":").map(Number);
+    const endH = String((h+1)%24).padStart(2,"0");
+    dates = `${start}/${d}T${endH}${String(m).padStart(2,"0")}00`;
+  } else {
+    const nd = new Date(ev.event_date+"T00:00:00"); nd.setDate(nd.getDate()+1);
+    const nds = `${nd.getFullYear()}${String(nd.getMonth()+1).padStart(2,"0")}${String(nd.getDate()).padStart(2,"0")}`;
+    dates = `${d}/${nds}`;
+  }
+  const p = new URLSearchParams({ text: ev.title, dates });
+  if (ev.notes) p.set("details", ev.notes);
+  return `${base}&${p.toString()}`;
+}
+function renderDates(){
+  const wrap = $("dates"); wrap.innerHTML = "";
+  // Google connect banner (only when auto-sync is configured)
+  if (GOOGLE_CLIENT_ID){
+    const b = document.createElement("div"); b.className = "gcal-banner";
+    if (gcalToken()){
+      b.innerHTML = `<b>Google Calendar connected.</b> New dates sync automatically.
+        <button class="btn" id="gcal-disconnect">Disconnect</button>`;
+    } else {
+      b.innerHTML = `<b>Connect Google Calendar</b> to auto-add your dates.
+        <button class="btn primary" id="gcal-connect">Connect</button>`;
+    }
+    wrap.appendChild(b);
+    const c = $("gcal-connect"); if (c) c.onclick = () => gcalConnect(true);
+    const d = $("gcal-disconnect"); if (d) d.onclick = () => { localStorage.removeItem("fb_gcal"); renderDates(); };
+  }
+  const today = new Date(); today.setHours(0,0,0,0);
+  const upcoming = state.events.filter(e => new Date(e.event_date+"T00:00:00") >= today);
+  const past = state.events.filter(e => new Date(e.event_date+"T00:00:00") < today);
+  if (!state.events.length){
+    const e = document.createElement("div"); e.className="list-empty";
+    e.innerHTML = "No dates yet.<br>Add things like recitals, appointments and birthdays.";
+    wrap.appendChild(e);
+  }
+  [...upcoming, ...past].forEach(ev => wrap.appendChild(renderDateCard(ev)));
+}
+function renderDateCard(ev){
+  const d = new Date(ev.event_date+"T00:00:00");
+  const el = document.createElement("div"); el.className = "date-card";
+  el.innerHTML = `
+    <div class="date-chip"><div class="d">${d.getDate()}</div>
+      <div class="m">${d.toLocaleDateString(undefined,{month:"short"})}</div></div>
+    <div class="date-body">
+      <div class="dt-title"></div>
+      <div class="dt-sub"></div>
+      <div class="date-actions"></div>
+    </div>`;
+  el.querySelector(".dt-title").textContent = ev.title;
+  el.querySelector(".dt-sub").textContent = fmtDateSub(ev);
+  const actions = el.querySelector(".date-actions");
+  // Google calendar control: auto if synced, else one-tap link
+  if (ev.gcal_synced){
+    const s = document.createElement("span"); s.className = "synced"; s.textContent = "✓ In Google Calendar";
+    actions.appendChild(s);
+  } else if (GOOGLE_CLIENT_ID && gcalToken()){
+    const btn = document.createElement("button"); btn.className = "gcal"; btn.textContent = "📅 Add to Google Calendar";
+    btn.onclick = () => pushToGoogle(ev);
+    actions.appendChild(btn);
+  } else {
+    const a = document.createElement("a"); a.className = "gcal"; a.href = gcalLink(ev); a.target = "_blank"; a.rel="noopener";
+    a.textContent = "📅 Add to Calendar";
+    actions.appendChild(a);
+  }
+  const edit = document.createElement("button"); edit.textContent = "Edit";
+  edit.onclick = () => openDateSheet(ev);
+  actions.appendChild(edit);
+  return el;
+}
+function openDateSheet(ev){
+  state.editingDateId = ev ? ev.id : null;
+  $("date-sheet-title").textContent = ev ? "Edit date" : "Add a date";
+  $("date-title").value = ev?.title || "";
+  $("date-date").value = ev?.event_date || "";
+  $("date-time").value = ev?.event_time || "";
+  $("date-notes").value = ev?.notes || "";
+  $("date-delete").classList.toggle("hidden", !ev);
+  show("date-sheet");
+}
+async function saveDate(){
+  const title = $("date-title").value.trim();
+  const event_date = $("date-date").value;
+  if (!title || !event_date){ toast("Add a name and a date"); return; }
+  const row = { title, event_date, event_time: $("date-time").value || null, notes: $("date-notes").value.trim() || null };
+  let saved;
+  if (state.editingDateId){
+    ({ data:saved } = await sb.from("events").update({ ...row, gcal_synced:false }).eq("id", state.editingDateId).select().single());
+  } else {
+    row.author = state.me;
+    ({ data:saved } = await sb.from("events").insert(row).select().single());
+  }
+  hide("date-sheet"); await loadEvents();
+  // auto-sync to Google if connected
+  if (saved && GOOGLE_CLIENT_ID && gcalToken()) pushToGoogle(saved);
+}
+
+/* ================= GOOGLE CALENDAR ================= */
+function gcalToken(){
+  try {
+    const t = JSON.parse(localStorage.getItem("fb_gcal") || "null");
+    if (t && t.token && t.exp > Date.now()) return t.token;
+  } catch {}
+  return null;
+}
+let tokenClient = null;
+function initTokenClient(cb){
+  if (!window.google?.accounts?.oauth2){ toast("Google library still loading — try again in a moment"); return null; }
+  return google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: "https://www.googleapis.com/auth/calendar.events",
+    callback: (resp) => {
+      if (resp.access_token){
+        localStorage.setItem("fb_gcal", JSON.stringify({ token: resp.access_token, exp: Date.now() + (resp.expires_in||3500)*1000 }));
+        toast("✅ Google Calendar connected");
+        renderDates(); cb && cb();
+      }
+    },
+  });
+}
+function gcalConnect(interactive){
+  if (!GOOGLE_CLIENT_ID){ toast("Google sign-in isn't set up yet"); return; }
+  tokenClient = tokenClient || initTokenClient();
+  if (!tokenClient) return;
+  tokenClient.requestAccessToken({ prompt: interactive ? "consent" : "" });
+}
+async function pushToGoogle(ev){
+  const token = gcalToken();
+  if (!token){ gcalConnect(true); return; }
+  const body = ev.event_time
+    ? { summary: ev.title, description: ev.notes||"",
+        start:{ dateTime: `${ev.event_date}T${ev.event_time}:00`, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+        end:{ dateTime: `${ev.event_date}T${String((parseInt(ev.event_time)+1)%24).padStart(2,"0")}${ev.event_time.slice(2)}:00`, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone } }
+    : { summary: ev.title, description: ev.notes||"",
+        start:{ date: ev.event_date }, end:{ date: ev.event_date } };
+  try {
+    const res = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
+      method:"POST", headers:{ Authorization:`Bearer ${token}`, "Content-Type":"application/json" }, body: JSON.stringify(body),
+    });
+    if (res.ok){ await sb.from("events").update({ gcal_synced:true }).eq("id", ev.id); toast("✅ Added to Google Calendar"); loadEvents(); }
+    else if (res.status===401){ localStorage.removeItem("fb_gcal"); gcalConnect(true); }
+    else { toast("Couldn't add to Google Calendar"); }
+  } catch { toast("Calendar connection failed"); }
+}
+
 /* ---------------- wire up events ---------------- */
-// gate unlock
+// bottom nav
+document.querySelectorAll(".nav-btn").forEach(b => b.onclick = () => switchView(b.dataset.view));
+
+// lists
+$("new-list-btn").onclick = () => {
+  const v = $("new-list-name").value.trim(); if (!v) return;
+  addList(v); $("new-list-name").value = "";
+};
+$("new-list-name").addEventListener("keydown", e => { if (e.key==="Enter"){ e.preventDefault(); $("new-list-btn").click(); } });
+$("list-add-form").addEventListener("submit", e => {
+  e.preventDefault();
+  const v = $("list-add-text").value.trim(); if (!v || !state.openListId) return;
+  addItem(state.openListId, v); $("list-add-text").value = ""; $("list-add-text").focus();
+});
+$("list-rename").onclick = () => {
+  const list = state.lists.find(l=>l.id===state.openListId); if (!list) return;
+  const v = prompt("Rename list:", list.title); if (v!==null && v.trim()) renameList(list.id, v.trim());
+};
+$("list-clear-done").onclick = () => { if (state.openListId) clearDone(state.openListId); };
+$("list-delete").onclick = () => {
+  if (state.openListId && confirm("Delete this whole list?")){ deleteList(state.openListId); state.openListId=null; hide("list-sheet"); }
+};
+$("list-close").onclick = () => { state.openListId=null; hide("list-sheet"); };
+$("list-sheet").onclick = e => { if (e.target.id==="list-sheet"){ state.openListId=null; hide("list-sheet"); } };
+
+// dates
+$("new-date-btn").onclick = () => openDateSheet(null);
+$("date-save").onclick = saveDate;
+$("date-cancel").onclick = () => hide("date-sheet");
+$("date-sheet").onclick = e => { if (e.target.id==="date-sheet") hide("date-sheet"); };
+$("date-delete").onclick = async () => {
+  if (state.editingDateId && confirm("Delete this date?")){
+    await sb.from("events").delete().eq("id", state.editingDateId);
+    hide("date-sheet"); loadEvents();
+  }
+};
+
+// gate unlock — passcode IS the family account password (enforced server-side)
 $("gate-unlock-btn").onclick = async () => {
   const v = $("gate-pass").value.trim();
   if (!v) return;
-  if (await sha(v) === state.settings.passhash){
-    localStorage.setItem("fb_unlocked", state.settings.passhash);
-    hide("gate"); $("gate-err").classList.add("hidden");
-    if (!state.me || !state.settings.names.includes(state.me)) askWho(); else enterApp();
-  } else {
-    $("gate-err").textContent = "That passcode didn't match. Try again.";
+  const btn = $("gate-unlock-btn"); btn.disabled = true; btn.textContent = "Checking…";
+  $("gate-err").classList.add("hidden");
+  try {
+    // try to sign in to the existing board
+    let { error } = await sb.auth.signInWithPassword({ email: FAMILY_EMAIL, password: v });
+    if (!error){ hide("gate"); await afterAuthed(); return; }
+    // not signed in — maybe this is the very first setup: create the board
+    let { data, error: se } = await sb.auth.signUp({ email: FAMILY_EMAIL, password: v });
+    if (!se){
+      if (!data.session){ // ensure we have a session
+        const r = await sb.auth.signInWithPassword({ email: FAMILY_EMAIL, password: v });
+        if (r.error) throw r.error;
+      }
+      hide("gate"); showNamesSetup(); return; // first run → collect names
+    }
+    if (/already registered/i.test(se.message)){
+      $("gate-err").textContent = "That passcode didn't match. Try again.";
+    } else if (/at least 6|password/i.test(se.message)){
+      $("gate-err").textContent = "First time? Choose a passcode of at least 6 characters.";
+    } else {
+      $("gate-err").textContent = se.message;
+    }
     $("gate-err").classList.remove("hidden");
+  } catch (e){
+    $("gate-err").textContent = e.message || "Something went wrong. Check your connection.";
+    $("gate-err").classList.remove("hidden");
+  } finally {
+    btn.disabled = false; btn.textContent = "Open";
   }
 };
 $("gate-pass").addEventListener("keydown", e => { if (e.key==="Enter") $("gate-unlock-btn").click(); });
 
-// first-time setup
+// first-time setup: names only (we're already signed in by now)
 $("setup-btn").onclick = async () => {
-  const pass = $("setup-pass").value.trim();
   const n1 = $("setup-name1").value.trim() || "Me";
   const n2 = $("setup-name2").value.trim() || "Partner";
-  if (pass.length < 3){ $("setup-err").textContent = "Pick a passcode of at least 3 characters."; $("setup-err").classList.remove("hidden"); return; }
-  state.settings = { passhash: await sha(pass), names:[n1,n2], labels:{} };
+  state.settings = { names:[n1,n2], labels: state.settings?.labels || {} };
   await saveSettings();
-  localStorage.setItem("fb_unlocked", state.settings.passhash);
   state.me = n1; localStorage.setItem("fb_me", n1);
-  enterApp();
+  hide("gate"); enterApp();
 };
 
 // add card
@@ -323,7 +648,7 @@ $("set-save").onclick = async () => {
   hide("settings"); renderBoard(); toast("Saved");
 };
 $("set-switch").onclick = () => { hide("settings"); askWho(); };
-$("set-lock").onclick = () => { localStorage.removeItem("fb_unlocked"); location.reload(); };
+$("set-lock").onclick = async () => { await sb.auth.signOut(); location.reload(); };
 
 // register service worker (installable PWA)
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(()=>{});

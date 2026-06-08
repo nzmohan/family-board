@@ -115,6 +115,59 @@ button{font-family:inherit; cursor:pointer}
 .sheet-moves button.current{background:#f0fdfa; border-color:var(--teal); color:var(--teal)}
 .sheet-moves .dot{width:10px;height:10px;border-radius:50%}
 
+/* ---------- views + bottom nav ---------- */
+.view{flex:1; display:flex; flex-direction:column; min-height:0}
+.scroll-area{flex:1; overflow-y:auto; padding:14px 14px 6px}
+.bottom-nav{display:flex; border-top:1px solid var(--line); background:#fff;
+  padding-bottom:var(--safe-b)}
+.nav-btn{flex:1; border:none; background:none; padding:9px 0 8px; font-size:11.5px; font-weight:600;
+  color:var(--grey); display:flex; flex-direction:column; align-items:center; gap:3px}
+.nav-btn span{font-size:21px; line-height:1}
+.nav-btn.active{color:var(--teal)}
+.fab-add{margin:0 14px calc(14px + var(--safe-b)); width:auto}
+
+/* ---------- lists ---------- */
+.list-card{background:var(--card); border-radius:16px; padding:15px 16px; margin-bottom:11px;
+  box-shadow:var(--shadow); border:1px solid var(--line); display:flex; align-items:center; gap:12px}
+.list-card .lc-title{font-size:16.5px; font-weight:700; flex:1}
+.list-card .lc-count{font-size:13px; color:var(--grey); background:var(--bg); border-radius:999px; padding:3px 10px}
+.list-card .lc-arrow{color:var(--grey); font-size:20px}
+.list-sheet-head{display:flex; align-items:center; gap:10px; margin-bottom:6px}
+.list-sheet-head h2{flex:1; margin:0}
+.icon-btn.dark{background:var(--bg); color:var(--navy)}
+.list-items{margin:10px 0}
+.li{display:flex; align-items:center; gap:12px; padding:12px 4px; border-bottom:1px solid var(--line)}
+.li:last-child{border-bottom:none}
+.li .check{width:24px; height:24px; border-radius:7px; border:2px solid var(--line); flex:0 0 auto;
+  display:flex; align-items:center; justify-content:center; font-size:15px; color:#fff; background:#fff}
+.li.done .check{background:var(--done); border-color:var(--done)}
+.li .li-text{flex:1; font-size:16px; line-height:1.4; word-break:break-word}
+.li.done .li-text{text-decoration:line-through; color:var(--grey)}
+.li .li-del{background:none; border:none; color:var(--grey); font-size:17px; padding:4px 6px}
+.list-add{display:flex; gap:8px; margin:14px 0 4px}
+.list-add .big-input{margin-top:0}
+.list-empty{color:var(--grey); text-align:center; padding:24px 10px; font-size:14px}
+
+/* ---------- dates ---------- */
+.date-card{background:var(--card); border-radius:16px; padding:14px 15px; margin-bottom:11px;
+  box-shadow:var(--shadow); border:1px solid var(--line); display:flex; gap:13px; align-items:flex-start}
+.date-chip{flex:0 0 auto; width:52px; text-align:center; background:var(--navy); color:#fff;
+  border-radius:12px; padding:7px 0; line-height:1.05}
+.date-chip .d{font-size:21px; font-weight:800} .date-chip .m{font-size:11px; text-transform:uppercase; letter-spacing:.04em}
+.date-body{flex:1; min-width:0}
+.date-body .dt-title{font-size:16px; font-weight:700; word-break:break-word}
+.date-body .dt-sub{font-size:13px; color:var(--grey); margin-top:2px}
+.date-actions{display:flex; gap:8px; margin-top:10px; flex-wrap:wrap}
+.date-actions a, .date-actions button{font-size:13px; font-weight:600; text-decoration:none;
+  padding:7px 12px; border-radius:10px; border:1px solid var(--line); background:#fff; color:var(--navy)}
+.date-actions .gcal{background:#1a73e8; color:#fff; border-color:#1a73e8}
+.date-actions .synced{background:#e7f7ee; color:#15803d; border-color:#bbe9cd}
+.gcal-banner{background:#fff; border:1px solid var(--line); border-radius:14px; padding:13px 15px;
+  margin-bottom:14px; font-size:14px; box-shadow:var(--shadow)}
+.gcal-banner b{color:var(--navy)}
+.gcal-banner button{margin-top:9px}
+.row2{display:flex; gap:10px} .row2 .field{flex:1}
+
 /* toast */
 .toast{position:fixed; left:50%; bottom:calc(86px + var(--safe-b)); transform:translateX(-50%);
   background:var(--navy); color:#fff; padding:12px 18px; border-radius:12px; font-size:14px;
