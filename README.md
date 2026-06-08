@@ -2,7 +2,7 @@
 
 A shared family Kanban board for ideas, to-dos and plans — built for Mo & family.
 
-- **Live app:** _(set after deploy)_
+- **Live app:** https://nzmohan.github.io/family-board/
 - **Columns:** Ideas → To Do → Doing → Done (renameable in Settings)
 - **Sharing:** one family passcode; each person tags who they are on their own phone
 - **Voice:** use the iPhone keyboard mic to dictate into the add box
