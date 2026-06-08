@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <meta name="theme-color" content="#0e9f8e" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Our Board" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icons/icon-180.png" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>Our Family Board</title>
+</head>
+<body>
+  <!-- Lock / setup screen -->
+  <div id="gate" class="gate hidden">
+    <div class="gate-card">
+      <div class="gate-logo">🏔️</div>
+      <h1 id="gate-title">Our Family Board</h1>
+      <p id="gate-sub" class="muted">Enter the family passcode</p>
+
+      <!-- unlock -->
+      <div id="gate-unlock">
+        <input id="gate-pass" class="big-input" type="password" inputmode="numeric"
+               autocomplete="off" placeholder="Passcode" />
+        <button id="gate-unlock-btn" class="btn primary block">Open</button>
+        <p id="gate-err" class="error hidden"></p>
+      </div>
+
+      <!-- first-time setup -->
+      <div id="gate-setup" class="hidden">
+        <label class="field"><span>Choose a family passcode</span>
+          <input id="setup-pass" class="big-input" type="text" autocomplete="off" placeholder="e.g. a word or numbers" />
+        </label>
+        <label class="field"><span>Your name</span>
+          <input id="setup-name1" class="big-input" type="text" autocomplete="off" placeholder="Mo" />
+        </label>
+        <label class="field"><span>Your partner's name</span>
+          <input id="setup-name2" class="big-input" type="text" autocomplete="off" placeholder="e.g. Sarah" />
+        </label>
+        <button id="setup-btn" class="btn primary block">Create our board</button>
+        <p id="setup-err" class="error hidden"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Who-are-you (per device) -->
+  <div id="who" class="gate hidden">
+    <div class="gate-card">
+      <div class="gate-logo">👋</div>
+      <h1>Who's using this phone?</h1>
+      <p class="muted">So we can tag who added what.</p>
+      <div id="who-options" class="who-options"></div>
+    </div>
+  </div>
+
+  <!-- Main app -->
+  <div id="app" class="app hidden">
+    <header class="topbar">
+      <div class="topbar-title">
+        <span class="me-dot" id="me-dot"></span>
+        <span id="me-name">—</span>
+      </div>
+      <div class="topbar-actions">
+        <button id="btn-export" class="icon-btn" title="Copy for Claude">📤</button>
+        <button id="btn-settings" class="icon-btn" title="Settings">⚙️</button>
+      </div>
+    </header>
+
+    <!-- column tabs (mobile) -->
+    <nav id="tabs" class="tabs"></nav>
+
+    <!-- board -->
+    <main id="board" class="board"></main>
+
+    <!-- add bar -->
+    <form id="add-form" class="add-bar">
+      <textarea id="add-text" class="add-text" rows="1"
+        placeholder="Type an idea or to-do…  (tap 🎤 on your keyboard to speak)"></textarea>
+      <button type="submit" id="add-btn" class="btn primary add-btn">Add</button>
+    </form>
+  </div>
+
+  <!-- Card action sheet -->
+  <div id="sheet" class="sheet-overlay hidden">
+    <div class="sheet">
+      <div id="sheet-text" class="sheet-text"></div>
+      <div class="sheet-meta" id="sheet-meta"></div>
+      <div class="sheet-section">Move to</div>
+      <div id="sheet-moves" class="sheet-moves"></div>
+      <button id="sheet-edit" class="btn block">✏️ Edit</button>
+      <button id="sheet-delete" class="btn danger block">🗑️ Delete</button>
+      <button id="sheet-cancel" class="btn ghost block">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Settings sheet -->
+  <div id="settings" class="sheet-overlay hidden">
+    <div class="sheet">
+      <h2>Settings</h2>
+      <label class="field"><span>Person 1 name</span>
+        <input id="set-name1" class="big-input" type="text" /></label>
+      <label class="field"><span>Person 2 name</span>
+        <input id="set-name2" class="big-input" type="text" /></label>
+      <div class="sheet-section">Column names</div>
+      <div id="set-columns"></div>
+      <button id="set-save" class="btn primary block">Save</button>
+      <button id="set-switch" class="btn block">🔄 Switch who I am on this phone</button>
+      <button id="set-export" class="btn block">📤 Copy everything for Claude</button>
+      <button id="set-lock" class="btn block">🔒 Lock this phone</button>
+      <button id="set-cancel" class="btn ghost block">Close</button>
+      <p class="muted tiny" id="set-version"></p>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
