@@ -12,7 +12,7 @@ export const FAMILY_EMAIL = "family@altitude-famboard.app";
 // (Google Cloud → Credentials → OAuth client ID → Web application, with JS origin
 // https://nzmohan.github.io). Until then the app falls back to a one-tap "Add to
 // Calendar" link that needs no setup.
-export const GOOGLE_CLIENT_ID = ""; // e.g. "1234567890-abc.apps.googleusercontent.com"
+export const GOOGLE_CLIENT_ID = "1097457013952-jjl2he5a8v1ji1sp4m1ihu9adh69hhin.apps.googleusercontent.com";
 
 // The four board columns. Labels are overridable in Settings (stored shared in Supabase).
 export const DEFAULT_COLUMNS = [
