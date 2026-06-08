@@ -261,7 +261,7 @@ function switchView(view){
   document.querySelectorAll(".nav-btn").forEach(b => b.classList.toggle("active", b.dataset.view===view));
   if (view==="board") renderBoard();
   if (view==="lists") renderLists();
-  if (view==="dates") renderDates();
+  if (view==="dates"){ gcalSilentRefresh(); renderDates(); }
 }
 
 /* ================= LISTS ================= */
@@ -466,30 +466,48 @@ function gcalToken(){
   } catch {}
   return null;
 }
-let tokenClient = null;
-function initTokenClient(cb){
-  if (!window.google?.accounts?.oauth2){ toast("Google library still loading — try again in a moment"); return null; }
-  return google.accounts.oauth2.initTokenClient({
+let tokenClient = null, tokenWaiters = [], silentTried = false;
+function ensureTokenClient(){
+  if (tokenClient) return tokenClient;
+  if (!window.google?.accounts?.oauth2) return null;
+  tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: GOOGLE_CLIENT_ID,
     scope: "https://www.googleapis.com/auth/calendar.events",
     callback: (resp) => {
-      if (resp.access_token){
+      if (resp.access_token)
         localStorage.setItem("fb_gcal", JSON.stringify({ token: resp.access_token, exp: Date.now() + (resp.expires_in||3500)*1000 }));
-        toast("✅ Google Calendar connected");
-        renderDates(); cb && cb();
-      }
+      const ws = tokenWaiters; tokenWaiters = [];
+      ws.forEach(fn => fn(resp.access_token || null));
+      renderDates();
     },
+    error_callback: () => { const ws = tokenWaiters; tokenWaiters = []; ws.forEach(fn => fn(null)); },
+  });
+  return tokenClient;
+}
+// Returns an access token (cached → silent refresh → interactive consent as last resort).
+function requestToken(interactive){
+  return new Promise((resolve) => {
+    const tc = ensureTokenClient();
+    if (!tc){ resolve(null); return; }
+    tokenWaiters.push(resolve);
+    try { tc.requestAccessToken({ prompt: interactive ? "consent" : "" }); }
+    catch { tokenWaiters = tokenWaiters.filter(f => f!==resolve); resolve(null); }
   });
 }
-function gcalConnect(interactive){
+// Try to keep the connection alive quietly when the Dates view opens.
+function gcalSilentRefresh(){
+  if (!GOOGLE_CLIENT_ID || gcalToken() || silentTried) return;
+  silentTried = true;
+  requestToken(false);
+}
+async function gcalConnect(interactive){
   if (!GOOGLE_CLIENT_ID){ toast("Google sign-in isn't set up yet"); return; }
-  tokenClient = tokenClient || initTokenClient();
-  if (!tokenClient) return;
-  tokenClient.requestAccessToken({ prompt: interactive ? "consent" : "" });
+  const t = await requestToken(interactive);
+  if (t) toast("✅ Google Calendar connected"); else if (interactive) toast("Couldn't connect — try again");
 }
 async function pushToGoogle(ev){
-  const token = gcalToken();
-  if (!token){ gcalConnect(true); return; }
+  let token = gcalToken() || await requestToken(false) || await requestToken(true);
+  if (!token){ return; }
   const body = ev.event_time
     ? { summary: ev.title, description: ev.notes||"",
         start:{ dateTime: `${ev.event_date}T${ev.event_time}:00`, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
